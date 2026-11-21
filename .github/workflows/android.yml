@@ -27,57 +27,47 @@ jobs:
         with:
           packages: platform-tools
 
-      - name: Extract Project ZIP
-        shell: bash
-        run: |
-          if ! find . -type f \( -name settings.gradle -o -name settings.gradle.kts -o -name gradlew \) | grep -q .; then
-            ZIP_FILE=$(find . -type f -name '*.zip' -not -path './.git/*' | head -n 1)
-            if [ -z "$ZIP_FILE" ]; then
-              echo "ERROR: No Android Gradle project or project ZIP found."
-              exit 1
-            fi
-            mkdir -p source
-            unzip -q "$ZIP_FILE" -d source
-          fi
-
-      - name: Locate Android Gradle Project
-        id: project
-        shell: bash
-        run: |
-          PROJECT_FILE=$(find . -type f \( -name settings.gradle -o -name settings.gradle.kts \) -not -path './.git/*' | head -n 1)
-          if [ -z "$PROJECT_FILE" ]; then
-            PROJECT_FILE=$(find . -type f \( -name build.gradle -o -name build.gradle.kts \) -not -path './.git/*' | head -n 1)
-          fi
-          if [ -z "$PROJECT_FILE" ]; then
-            echo "ERROR: No settings.gradle or build.gradle found after extracting the ZIP."
-            echo "ZIP contents:"
-            find source -maxdepth 4 -type f | head -n 100
-            exit 1
-          fi
-          PROJECT_DIR=$(dirname "$PROJECT_FILE")
-          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
-          echo "Android project directory: $PROJECT_DIR"
-          if [ -f "$PROJECT_DIR/gradlew" ]; then
-            chmod +x "$PROJECT_DIR/gradlew"
-            echo "USE_WRAPPER=true" >> "$GITHUB_ENV"
-          else
-            echo "USE_WRAPPER=false" >> "$GITHUB_ENV"
-          fi
-
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
 
+      - name: Extract Project ZIP
+        shell: bash
+        run: |
+          ZIP_COUNT=$(find . -type f -name '*.zip' -not -path './.git/*' | wc -l)
+          if [ "$ZIP_COUNT" -eq 0 ]; then
+            echo "No project ZIP found; checking repository for Gradle files."
+          else
+            mkdir -p source
+            while IFS= read -r ZIP_FILE; do
+              echo "Extracting: $ZIP_FILE"
+              unzip -oq "$ZIP_FILE" -d source
+            done < <(find . -type f -name '*.zip' -not -path './.git/*')
+          fi
+
+      - name: Find Android Project
+        shell: bash
+        run: |
+          PROJECT_FILE=$(find . -type f \( -name settings.gradle -o -name settings.gradle.kts \) -not -path './.git/*' | head -n 1)
+          if [ -n "$PROJECT_FILE" ]; then
+            PROJECT_DIR=$(dirname "$PROJECT_FILE")
+          else
+            PROJECT_FILE=$(find . -type f \( -name build.gradle -o -name build.gradle.kts \) -not -path './.git/*' | head -n 1)
+            if [ -z "$PROJECT_FILE" ]; then
+              echo "ERROR: No settings.gradle or build.gradle found. The ZIP may not contain an Android Gradle project."
+              exit 1
+            fi
+            PROJECT_DIR=$(dirname "$PROJECT_FILE")
+          fi
+          echo "Using Android project directory: $PROJECT_DIR"
+          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
+
       - name: Build Debug APK
         shell: bash
         run: |
           cd "$PROJECT_DIR"
-          if [ "$USE_WRAPPER" = "true" ]; then
-            ./gradlew --no-daemon assembleDebug
-          else
-            gradle --no-daemon assembleDebug
-          fi
+          gradle --no-daemon assembleDebug
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
